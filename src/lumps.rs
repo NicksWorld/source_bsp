@@ -3,6 +3,8 @@ use std::convert::TryInto;
 
 use regex::Regex;
 
+use std::io::Write;
+
 #[derive(Debug)]
 pub struct Lump {
     pub fileofs: i32,
@@ -161,6 +163,14 @@ impl LumpReader {
     pub fn get_data(&self) -> &[u8] {
         &self.data
     }
+
+    pub fn get_pos(&self) -> usize {
+        self.position
+    }
+
+    pub fn get_len(&self) -> usize {
+        self.data.len()
+    }
 }
 
 #[derive(Debug)]
@@ -191,6 +201,18 @@ pub struct Vertex {
     x: f32,
     y: f32,
     z: f32,
+}
+
+#[derive(Debug)]
+pub struct Node {
+    plane_num: i32,
+    children: [i32; 2],
+    mins: [i16; 3],
+    maxs: [i16; 3],
+    first_face: u16,
+    num_faces: u16,
+    area: i16,
+    padding: i16,
 }
 
 #[derive(Debug)]
@@ -231,14 +253,43 @@ pub struct LightMapSample {
 }
 
 #[derive(Debug)]
+pub struct OccluderData {
+    flags: i32,
+    first_poly: i32,
+    poly_count: i32,
+    mins: [f32; 3],
+    maxs: [f32; 3],
+    area: i32,
+}
+
+#[derive(Debug)]
+pub struct OccluderPolyData {
+    first_vertex_index: i32,
+    vertex_count: i32,
+    plane_num: i32,
+}
+
+#[derive(Debug)]
+pub struct Occluder {
+    count: i32,
+    occluder_data: Vec<OccluderData>,
+    poly_data_count: i32,
+    poly_data: Vec<OccluderPolyData>,
+    vertex_index_count: i32,
+    vertex_indicies: Vec<i32>,
+}
+
+#[derive(Debug)]
 pub struct ParsedLumps {
-    entities: Vec<HashMap<String, String>>,
-    planes: Vec<Plane>,
-    texdata: Vec<TexData>,
-    vertex_list: Vec<Vertex>,
-    texinfo: Vec<TexInfo>,
-    faces: Vec<Face>,
-    lightmap_samples: Vec<LightMapSample>,
+    pub entities: Vec<HashMap<String, String>>,
+    pub planes: Vec<Plane>,
+    pub texdata: Vec<TexData>,
+    pub vertex_list: Vec<Vertex>,
+    pub nodes: Vec<Node>,
+    pub texinfo: Vec<TexInfo>,
+    pub faces: Vec<Face>,
+    pub lightmap_samples: Vec<LightMapSample>,
+    pub occluders: Vec<Occluder>,
 }
 
 pub fn parse_lump_data(lumps: Vec<Lump>, full_data: &[u8]) -> ParsedLumps {
@@ -247,15 +298,46 @@ pub fn parse_lump_data(lumps: Vec<Lump>, full_data: &[u8]) -> ParsedLumps {
         planes: vec![],
         texdata: vec![],
         vertex_list: vec![],
+        nodes: vec![],
         texinfo: vec![],
         faces: vec![],
         lightmap_samples: vec![],
+        occluders: vec![],
     };
 
     for (i, lump) in lumps.iter().enumerate() {
+        if lump.fileofs == 0 {
+            continue; // Lump isn't actually included
+        }
+
         let mut data = LumpReader::new(
             &full_data[lump.fileofs as usize..(lump.fileofs + lump.filelen) as usize],
         );
+
+        if lump.ident != [0, 0, 0, 0] {
+            // The packet is compressed. Read the header, convert to normal LZMA and decompress.
+            let _ = data.read_u32(); // id
+            let actual_size = data.read_u32();
+            let _ = data.read_u32(); // lzma_size
+            let properties = [
+                data.read_u8(),
+                data.read_u8(),
+                data.read_u8(),
+                data.read_u8(),
+                data.read_u8(),
+            ];
+
+            let mut out = vec![0; actual_size as usize];
+
+            let mut data_in = vec![];
+            data_in.extend(&properties);
+            data_in.extend(&(actual_size as u64).to_le_bytes());
+            data_in.extend(&data.get_data()[17..]);
+
+            lzma_rs::lzma_decompress(&mut std::io::Cursor::new(data_in), &mut out).unwrap();
+
+            data = LumpReader::new(&out);
+        }
 
         match i {
             i if i == LumpType::Entities as usize => {
@@ -276,7 +358,7 @@ pub fn parse_lump_data(lumps: Vec<Lump>, full_data: &[u8]) -> ParsedLumps {
                 }
             }
             i if i == LumpType::Plane as usize => {
-                let num_lumps = (lump.filelen) / (4 + 4 + 4 + 4 + 4);
+                let num_lumps = (data.get_len()) / (4 + 4 + 4 + 4 + 4);
 
                 for _ in 0..num_lumps {
                     parsed.planes.push(Plane {
@@ -290,7 +372,7 @@ pub fn parse_lump_data(lumps: Vec<Lump>, full_data: &[u8]) -> ParsedLumps {
                 }
             }
             i if i == LumpType::Texdata as usize => {
-                let num_lumps = (lump.filelen) / 32;
+                let num_lumps = (data.get_len()) / 32;
 
                 for _ in 0..num_lumps {
                     parsed.texdata.push(TexData {
@@ -308,7 +390,7 @@ pub fn parse_lump_data(lumps: Vec<Lump>, full_data: &[u8]) -> ParsedLumps {
                 }
             }
             i if i == LumpType::Vertexes as usize => {
-                let num_lumps = (lump.filelen) / 12;
+                let num_lumps = (data.get_len()) / 12;
 
                 for _ in 0..num_lumps {
                     parsed.vertex_list.push(Vertex {
@@ -319,9 +401,24 @@ pub fn parse_lump_data(lumps: Vec<Lump>, full_data: &[u8]) -> ParsedLumps {
                 }
             }
             i if i == LumpType::Visibility as usize => (), // This one will be a challenge
-            i if i == LumpType::Nodes as usize => (),      // This one also will be a challenge
+            i if i == LumpType::Nodes as usize => {
+                let num_lumps = (data.get_len()) / 32;
+
+                for _ in 0..num_lumps {
+                    parsed.nodes.push(Node {
+                        plane_num: data.read_i32(),
+                        children: [data.read_i32(), data.read_i32()],
+                        mins: [data.read_i16(), data.read_i16(), data.read_i16()],
+                        maxs: [data.read_i16(), data.read_i16(), data.read_i16()],
+                        first_face: data.read_u16(),
+                        num_faces: data.read_u16(),
+                        area: data.read_i16(),
+                        padding: data.read_i16(),
+                    });
+                }
+            }
             i if i == LumpType::Texinfo as usize => {
-                let num_lumps = (lump.filelen) / 72;
+                let num_lumps = (data.get_len()) / 72;
 
                 for _ in 0..num_lumps {
                     parsed.texinfo.push(TexInfo {
@@ -359,7 +456,7 @@ pub fn parse_lump_data(lumps: Vec<Lump>, full_data: &[u8]) -> ParsedLumps {
                 }
             }
             i if i == LumpType::Faces as usize => {
-                let num_lumps = (lump.filelen) / 56;
+                let num_lumps = (data.get_len()) / 56;
 
                 for _ in 0..num_lumps {
                     parsed.faces.push(Face {
@@ -389,7 +486,7 @@ pub fn parse_lump_data(lumps: Vec<Lump>, full_data: &[u8]) -> ParsedLumps {
                 }
             }
             i if i == LumpType::Lighting as usize => {
-                let num_lumps = (lump.filelen) / 4;
+                let num_lumps = (data.get_len()) / 4;
 
                 for _ in 0..num_lumps {
                     parsed.lightmap_samples.push(LightMapSample {
@@ -400,7 +497,48 @@ pub fn parse_lump_data(lumps: Vec<Lump>, full_data: &[u8]) -> ParsedLumps {
                     });
                 }
             }
-            i if i == LumpType::Occlusion as usize => (),
+            i if i == LumpType::Occlusion as usize => {
+                while data.get_pos() < data.get_len() as usize {
+                    let count = data.read_i32();
+                    let mut occluder_data = vec![];
+
+                    for _ in 0..count {
+                        occluder_data.push(OccluderData {
+                            flags: data.read_i32(),
+                            first_poly: data.read_i32(),
+                            poly_count: data.read_i32(),
+                            mins: [data.read_f32(), data.read_f32(), data.read_f32()],
+                            maxs: [data.read_f32(), data.read_f32(), data.read_f32()],
+                            area: data.read_i32(),
+                        });
+                    }
+                    let poly_data_count = data.read_i32();
+                    let mut poly_data = vec![];
+
+                    for _ in 0..poly_data_count {
+                        poly_data.push(OccluderPolyData {
+                            first_vertex_index: data.read_i32(),
+                            vertex_count: data.read_i32(),
+                            plane_num: data.read_i32(),
+                        });
+                    }
+                    let vertex_index_count = data.read_i32();
+                    let mut vertex_indicies = vec![];
+
+                    for _ in 0..vertex_index_count {
+                        vertex_indicies.push(data.read_i32())
+                    }
+
+                    parsed.occluders.push(Occluder {
+                        count,
+                        occluder_data,
+                        poly_data_count,
+                        poly_data,
+                        vertex_index_count,
+                        vertex_indicies,
+                    });
+                }
+            }
             i if i == LumpType::Leafs as usize => (),
             i if i == LumpType::Faceids as usize => (),
             i if i == LumpType::Edges as usize => (),

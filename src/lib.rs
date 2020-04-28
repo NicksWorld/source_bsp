@@ -40,7 +40,6 @@ impl BspParser {
         let mut lumps = vec![];
 
         for i in 0..64 {
-            println!("{}", i);
             lumps.push(Lump {
                 fileofs: i32::from_le_bytes(
                     self.data[(8 + (i * 16))..(8 + 4 + (i * 16))]
