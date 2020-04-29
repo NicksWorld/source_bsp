@@ -185,7 +185,9 @@ pub mod LumpParser {
         pub texinfo: Vec<TexInfo>,
         pub faces: Vec<Face>,
         pub lightmap_samples: Vec<LightmapSample>,
-        pub occluders: Vec<Occluder>,
+            pub occluders: Vec<Occluder>,
+	    pub edges: Vec<Edge>,
+	    pub surfedges: Vec<i32>
     }
 
     macro_rules! parse_type {
@@ -232,7 +234,9 @@ pub mod LumpParser {
             texinfo: vec![],
             faces: vec![],
             lightmap_samples: vec![],
-            occluders: vec![],
+		occluders: vec![],
+		edges: vec![],
+		surfedges: vec![]
         };
 
         for (i, lump) in lumps.iter().enumerate() {
@@ -284,8 +288,12 @@ pub mod LumpParser {
                 }
                 i if i == LumpType::Leafs as usize => (),
                 i if i == LumpType::Faceids as usize => (),
-                i if i == LumpType::Edges as usize => (),
-                i if i == LumpType::Surfedges as usize => (),
+                i if i == LumpType::Edges as usize => parse_type!(data, parsed.edges, Edge),
+                    i if i == LumpType::Surfedges as usize => {
+			    while data.get_pos() < data.get_len() {
+				    parsed.surfedges.push(data.read_i32())
+			    }
+		    },
                 i if i == LumpType::Models as usize => (),
                 i if i == LumpType::Worldlights as usize => (),
                 i if i == LumpType::Leaffaces as usize => (),
