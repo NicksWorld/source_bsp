@@ -75,5 +75,8 @@ fn test_program() {
 
     let lumps = bsp_parser.read_lump_info();
 
-    println!("{:#?}", parse_lump_data(lumps, &bsp_parser.data));
+    println!(
+        "{:#?}",
+        LumpParser::parse_lump_data(lumps, &bsp_parser.data).occluders
+    );
 }
