@@ -10,73 +10,69 @@ pub struct Lump {
 
 pub enum LumpType {
     Entities = 0,
-    Plane,
-    Texdata,
-    Vertexes,
-    Visibility,
-    Nodes,
-    Texinfo,
-    Faces,
-    Lighting,
-    Occlusion,
-    Leafs,
-    Faceids,
-    Edges,
-    Surfedges,
-    Models,
-    Worldlights,
-    Leaffaces,
-    Leafbrushes,
-    Brushes,
-    Brushsides,
-    Areas,
-    Areaportals,
-    Portals,
-    UNUSED0,
-    UNUSED1,
-    UNUSED2,
-    UNUSED3,
-    Dispinfo,
-    Originalfaces,
-    Physdisp,
-    Physcollide,
-    Vertnormals,
-    Vertnormalindices,
-    DispLightmapAlphas,
-    DispVerts,
-    DispLightmapSamplePositions,
-    GameLump,
-    Leafwaterdata,
-    Primitives,
-    Primverts,
-    Primindicies,
-    Pakfile,
-    Clipportalverts,
-    Cubemaps,
-    TexdataStringData,
-    TexdataStringTable,
-    Overlays,
-    Leafmindisttowater,
-    FaceMacroTextureInfo,
-    DispTris,
-    Physcollidesurface,
-    PropBlob,
-    Wateroverlays,
-    Lightmappages,
-    LeafAmbientIndexHDR,
-    Lightmappageinfos,
-    LeafAmbientIndex,
-    LightingHDR,
-    WorldlightsHDR,
-    LeafAmbientLightingHDR,
-    LeafAmbientLighting,
-    Xzippakfile,
-    FacesHDR,
-    MapFlags,
-    OverlayFades,
-    OverlaySystemLevels,
-    Physlevel,
-    DispMultiblend,
+    Plane = 1,
+    Texdata = 2,
+    Vertexes = 3,
+    Visibility = 4,
+    Nodes = 5,
+    Texinfo = 6,
+    Faces = 7,
+    Lighting = 8,
+    Occlusion = 9,
+    Leafs = 10,
+    Faceids = 11,
+    Edges = 12,
+    Surfedges = 13,
+    Models = 14,
+    Worldlights = 15,
+    Leaffaces = 16,
+    Leafbrushes = 17,
+    Brushes = 18,
+    Brushsides = 19,
+    Areas = 20,
+    Areaportals = 21,
+    UNUSED0 = 22,
+    UNUSED1 = 23,
+    UNUSED2 = 24,
+    UNUSED3 = 25,
+    Dispinfo = 26,
+    Originalfaces = 27,
+    Physdisp = 28,
+    Physcollide = 29,
+    Vertnormals = 30,
+    Vertnormalindices = 31,
+    DispLightmapAlphas = 32,
+    DispVerts = 33,
+    DispLightmapSamplePositions = 34,
+    GameLump = 35,
+    Leafwaterdata = 36,
+    Primitives = 37,
+    Primverts = 38,
+    Primindicies = 39,
+    Pakfile = 40,
+    Clipportalverts = 41,
+    Cubemaps = 42,
+    TexdataStringData = 43,
+    TexdataStringTable = 44,
+    Overlays = 45,
+    Leafmindisttowater = 46,
+    FaceMacroTextureInfo = 47,
+    DispTris = 48,
+    Physcollidesurface = 49,
+    Wateroverlays = 50,
+    LeafAmbientIndexHDR = 51,
+    LeafAmbientIndex = 52,
+    LightingHDR = 53,
+    WorldlightsHDR = 54,
+    LeafAmbientLightingHDR = 55,
+    LeafAmbientLighting = 56,
+    Xzippakfile = 57,
+    FacesHDR = 58,
+    MapFlags = 59,
+    OverlayFades = 60,
+    OverlaySystemLevels = 61,
+    Physlevel = 62,
+    DispMultiblend = 63,
 }
 
 pub struct LumpReader {
@@ -117,6 +113,14 @@ impl LumpReader {
                 .try_into()
                 .unwrap(),
         )
+    }
+
+    pub fn read_x_u32(&mut self, count: usize) -> Vec<u32> {
+        let mut out = vec![];
+        for _ in 0..count {
+            out.push(self.read_u32());
+        }
+        out
     }
 
     pub fn read_u16(&mut self) -> u16 {
@@ -163,6 +167,10 @@ impl LumpReader {
         self.position
     }
 
+    pub fn skip_bytes(&mut self, byte_count: usize) {
+        self.position += byte_count;
+    }
+
     pub fn get_len(&self) -> usize {
         self.data.len()
     }
@@ -175,9 +183,9 @@ pub mod LumpParser {
     use crate::lumps::*;
     use regex::Regex;
 
-    #[derive(Debug)]
+    #[derive(Debug, Default)]
     pub struct ParsedLumps {
-        pub entities: Vec<HashMap<String, String>>,
+        pub entities: Vec<Entity>,
         pub planes: Vec<Plane>,
         pub texdata: Vec<TexData>,
         pub vertex_list: Vec<Vertex>,
@@ -188,11 +196,20 @@ pub mod LumpParser {
         pub occluders: Vec<Occluder>,
         pub edges: Vec<Edge>,
         pub surfedges: Vec<i32>,
+        pub models: Vec<Model>,
+        pub leaf_faces: Vec<u16>,
+        pub leaf_brushes: Vec<u16>,
+        pub brushes: Vec<Brush>,
+        pub brushsides: Vec<Brushside>,
+        pub areas: Vec<Area>,
+        pub area_portals: Vec<AreaPortal>,
+        pub displacement_info: Vec<DisplacementInfo>,
     }
 
     macro_rules! parse_type {
         ($data:expr, $dst:expr, $kind:ty) => {{
             while $data.get_pos() < $data.get_len() {
+                // Pushes the data read to the destination
                 $dst.push(<$kind>::from_reader(&mut $data));
             }
         }};
@@ -225,19 +242,8 @@ pub mod LumpParser {
     }
 
     pub fn parse_lump_data(lumps: Vec<Lump>, full_data: &[u8]) -> ParsedLumps {
-        let mut parsed = ParsedLumps {
-            entities: vec![],
-            planes: vec![],
-            texdata: vec![],
-            vertex_list: vec![],
-            nodes: vec![],
-            texinfo: vec![],
-            faces: vec![],
-            lightmap_samples: vec![],
-            occluders: vec![],
-            edges: vec![],
-            surfedges: vec![],
-        };
+        // Creates ParsedLumps empty and ready to be filled.
+        let mut parsed: ParsedLumps = Default::default();
 
         for (i, lump) in lumps.iter().enumerate() {
             if lump.fileofs == 0 {
@@ -249,23 +255,27 @@ pub mod LumpParser {
             );
 
             if lump.ident != [0, 0, 0, 0] {
-                // The packet is compressed. Read the header, convert to normal LZMA and decompress.
+                // The packet is compressed. Read the header, convert to normal LZMA and decompress
                 data = decompress_lumps(data);
             }
 
             match i {
                 i if i == LumpType::Entities as usize => {
                     lazy_static! {
-                        static ref BLOCK_RE: Regex = Regex::new("(\\{(?:.|\n)+?\\})").unwrap();
-                        static ref ITEM_RE: Regex = Regex::new("\"(.+?)\" \"(.+?)\"\n").unwrap();
-                    }
+                    // Regex to match the contents within currly brackets
+                                static ref BLOCK_RE: Regex = Regex::new("(\\{(?:.|\n)+?\\})").unwrap();
+                    // Regex to get the key:value pairs out of the data
+                                static ref ITEM_RE: Regex = Regex::new("\"(.+?)\" \"(.+?)\"\n").unwrap();
+                            }
 
                     let data = String::from_utf8_lossy(data.get_data());
 
                     for capture in BLOCK_RE.captures_iter(&data) {
                         let mut map = HashMap::new();
 
+                        // Loop through individual entity sections
                         for capture in ITEM_RE.captures_iter(&capture[0]) {
+                            // Take the key:value pair and put it in a hashmap
                             map.insert(capture[1].to_string(), capture[2].to_string());
                         }
                         parsed.entities.push(map);
@@ -294,20 +304,33 @@ pub mod LumpParser {
                         parsed.surfedges.push(data.read_i32())
                     }
                 }
-                i if i == LumpType::Models as usize => (),
+                i if i == LumpType::Models as usize => parse_type!(data, parsed.models, Model),
                 i if i == LumpType::Worldlights as usize => (),
-                i if i == LumpType::Leaffaces as usize => (),
-                i if i == LumpType::Leafbrushes as usize => (),
-                i if i == LumpType::Brushes as usize => (),
-                i if i == LumpType::Brushsides as usize => (),
-                i if i == LumpType::Areas as usize => (),
-                i if i == LumpType::Areaportals as usize => (),
-                i if i == LumpType::Portals as usize => (),
+                i if i == LumpType::Leaffaces as usize => {
+                    while data.get_pos() < data.get_len() {
+                        parsed.leaf_faces.push(data.read_u16())
+                    }
+                }
+                i if i == LumpType::Leafbrushes as usize => {
+                    while data.get_pos() < data.get_len() {
+                        parsed.leaf_brushes.push(data.read_u16())
+                    }
+                }
+                i if i == LumpType::Brushes as usize => parse_type!(data, parsed.brushes, Brush),
+                i if i == LumpType::Brushsides as usize => {
+                    parse_type!(data, parsed.brushsides, Brushside)
+                }
+                i if i == LumpType::Areas as usize => parse_type!(data, parsed.areas, Area),
+                i if i == LumpType::Areaportals as usize => {
+                    parse_type!(data, parsed.area_portals, AreaPortal)
+                }
                 i if i == LumpType::UNUSED0 as usize => (),
                 i if i == LumpType::UNUSED1 as usize => (),
                 i if i == LumpType::UNUSED2 as usize => (),
                 i if i == LumpType::UNUSED3 as usize => (),
-                i if i == LumpType::Dispinfo as usize => (),
+                i if i == LumpType::Dispinfo as usize => {
+                    parse_type!(data, parsed.displacement_info, DisplacementInfo)
+                }
                 i if i == LumpType::Originalfaces as usize => (),
                 i if i == LumpType::Physdisp as usize => (),
                 i if i == LumpType::Physcollide as usize => (),
@@ -331,11 +354,8 @@ pub mod LumpParser {
                 i if i == LumpType::FaceMacroTextureInfo as usize => (),
                 i if i == LumpType::DispTris as usize => (),
                 i if i == LumpType::Physcollidesurface as usize => (),
-                i if i == LumpType::PropBlob as usize => (),
                 i if i == LumpType::Wateroverlays as usize => (),
-                i if i == LumpType::Lightmappages as usize => (),
                 i if i == LumpType::LeafAmbientIndexHDR as usize => (),
-                i if i == LumpType::Lightmappageinfos as usize => (),
                 i if i == LumpType::LeafAmbientIndex as usize => (),
                 i if i == LumpType::LightingHDR as usize => (),
                 i if i == LumpType::WorldlightsHDR as usize => (),

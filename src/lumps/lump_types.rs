@@ -1,16 +1,26 @@
 use crate::lumps::LumpReader;
+use regex::Regex;
+
+use std::collections::HashMap;
 
 pub trait BspParseable {
     fn from_reader(data: &mut LumpReader) -> Self;
 }
 
+pub type Entity = HashMap<String, String>;
+
 type Vector = (f32, f32, f32);
+
+impl BspParseable for Vector {
+    fn from_reader(data: &mut LumpReader) -> Self {
+        (data.read_f32(), data.read_f32(), data.read_f32())
+    }
+}
 
 #[derive(Debug)]
 pub struct Plane {
     /// Normal vector
     pub normal: Vector,
-
     /// Distance from the origin (0,0,0)
     pub dist_from_origin: f32,
     /// Plane axis identifier
@@ -20,7 +30,7 @@ pub struct Plane {
 impl BspParseable for Plane {
     fn from_reader(data: &mut LumpReader) -> Self {
         Self {
-            normal: (data.read_f32(), data.read_f32(), data.read_f32()),
+            normal: Vector::from_reader(data),
 
             dist_from_origin: data.read_f32(),
             r#type: data.read_i32(),
@@ -32,7 +42,6 @@ impl BspParseable for Plane {
 pub struct TexData {
     /// RGB Reflectivity
     pub reflectivity: Vector,
-
     /// Index into TexdataStringTable
     pub texdata_string_table_index: i32,
     /// Source image width
@@ -357,6 +366,218 @@ impl BspParseable for Edge {
     fn from_reader(data: &mut LumpReader) -> Self {
         Self {
             vertex_indicies: [data.read_u16(), data.read_u16()],
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Model {
+    /// Bounding box
+    mins: Vector,
+    /// Bounding box
+    maxs: Vector,
+    /// For sounds/lights
+    origin: Vector,
+    /// Index into node array
+    head_node: i32,
+    /// Infex into face array
+    first_face: i32,
+    /// Number of faces
+    num_faces: i32,
+}
+
+impl BspParseable for Model {
+    fn from_reader(data: &mut LumpReader) -> Self {
+        Self {
+            mins: (data.read_f32(), data.read_f32(), data.read_f32()),
+            maxs: (data.read_f32(), data.read_f32(), data.read_f32()),
+            origin: (data.read_f32(), data.read_f32(), data.read_f32()),
+            head_node: data.read_i32(),
+            first_face: data.read_i32(),
+            num_faces: data.read_i32(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Brush {
+    /// First brushside
+    first_side: i32,
+    /// Number of brushsides
+    num_sides: i32,
+    /// Contents flags
+    contents: i32,
+}
+
+impl BspParseable for Brush {
+    fn from_reader(data: &mut LumpReader) -> Self {
+        Self {
+            first_side: data.read_i32(),
+            num_sides: data.read_i32(),
+            contents: data.read_i32(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Brushside {
+    /// Facing out of leaf
+    plane_num: u16,
+    /// Texture info
+    texinfo: i16,
+    /// Displacement info
+    dispinfo: i16,
+    /// Is the side a bevel plane?
+    bevel: i16,
+}
+
+impl BspParseable for Brushside {
+    fn from_reader(data: &mut LumpReader) -> Self {
+        Self {
+            plane_num: data.read_u16(),
+            texinfo: data.read_i16(),
+            dispinfo: data.read_i16(),
+            bevel: data.read_i16(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Area {
+    num_area_portals: i32,
+    first_area_portal: i32,
+}
+
+impl BspParseable for Area {
+    fn from_reader(data: &mut LumpReader) -> Self {
+        Self {
+            num_area_portals: data.read_i32(),
+            first_area_portal: data.read_i32(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct AreaPortal {
+    portal_key: u16,
+    other_area: u16,
+    first_clip_portal_vert: u16,
+    num_clip_portal_verts: u16,
+    plane_num: i32,
+}
+
+impl BspParseable for AreaPortal {
+    fn from_reader(data: &mut LumpReader) -> Self {
+        Self {
+            portal_key: data.read_u16(),
+            other_area: data.read_u16(),
+            first_clip_portal_vert: data.read_u16(),
+            num_clip_portal_verts: data.read_u16(),
+            plane_num: data.read_i32(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct CDispSubNeighbor {
+    neighbor_index: u16,
+    neighbor_orientation: u8,
+    span: u8,
+    neighbor_span: u8,
+}
+
+impl BspParseable for CDispSubNeighbor {
+    fn from_reader(data: &mut LumpReader) -> Self {
+        let neighbor_index = data.read_u16();
+        let neighbor_orientation = data.read_u8();
+        let span = data.read_u8();
+        let neighbor_span = data.read_u8();
+        //println!("N_SPAN: {} : {}", neighbor_span, neighbor_span == 0);
+        Self {
+            neighbor_index,
+            neighbor_orientation,
+            span,
+            neighbor_span,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct CDispNeighbor {
+    sub_neighbors: Vec<CDispSubNeighbor>,
+}
+
+impl BspParseable for CDispNeighbor {
+    fn from_reader(data: &mut LumpReader) -> Self {
+        let mut out = Self {
+            sub_neighbors: vec![],
+        };
+        for i in 0..2 {
+            let neighbor = CDispSubNeighbor::from_reader(data);
+            let is_last = neighbor.neighbor_span == 0;
+            println!("{} : {}", i, is_last);
+            out.sub_neighbors.push(neighbor);
+            if is_last && i == 0 {
+                println!("WOULD BREAK");
+                //break;
+            }
+        }
+        out
+    }
+}
+
+#[derive(Debug)]
+pub struct CDispCornerNeighbors {
+    neighbors: [u16; 4],
+    num_neighbors: u8,
+}
+
+impl BspParseable for CDispCornerNeighbors {
+    fn from_reader(data: &mut LumpReader) -> Self {
+        Self {
+            neighbors: [
+                data.read_u16(),
+                data.read_u16(),
+                data.read_u16(),
+                data.read_u16(),
+            ],
+            num_neighbors: data.read_u8(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct DisplacementInfo {
+    start_position: Vector,
+    disp_vert_start: i32,
+    disp_tri_start: i32,
+    power: i32,
+    min_tesselation: i32,
+    smoothing_angle: f32,
+    contents: i32,
+    map_face: u16,
+    lightmap_alpha_start: i32,
+    lightmap_sample_position_start: i32,
+    neighbor_data: (), // Temporary padding (90 bytes because I am lost)
+    allowed_verts: Vec<u32>,
+}
+
+impl BspParseable for DisplacementInfo {
+    fn from_reader(data: &mut LumpReader) -> Self {
+        println!("{}:{}", data.get_pos(), data.get_len());
+        Self {
+            start_position: Vector::from_reader(data),
+            disp_vert_start: data.read_i32(),
+            disp_tri_start: data.read_i32(),
+            power: data.read_i32(),
+            min_tesselation: data.read_i32(),
+            smoothing_angle: data.read_f32(),
+            contents: data.read_i32(),
+            map_face: data.read_u16(),
+            lightmap_alpha_start: data.read_i32(),
+            lightmap_sample_position_start: data.read_i32(),
+            neighbor_data: data.skip_bytes(90), // Skips the neighbor section because my readers are broken.
+            allowed_verts: data.read_x_u32(10),
         }
     }
 }

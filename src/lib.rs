@@ -77,6 +77,6 @@ fn test_program() {
 
     println!(
         "{:#?}",
-        LumpParser::parse_lump_data(lumps, &bsp_parser.data).occluders
+        LumpParser::parse_lump_data(lumps, &bsp_parser.data).displacement_info
     );
 }
