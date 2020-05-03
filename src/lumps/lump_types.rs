@@ -492,7 +492,6 @@ impl BspParseable for CDispSubNeighbor {
         let neighbor_orientation = data.read_u8();
         let span = data.read_u8();
         let neighbor_span = data.read_u8();
-        //println!("N_SPAN: {} : {}", neighbor_span, neighbor_span == 0);
         Self {
             neighbor_index,
             neighbor_orientation,
@@ -515,12 +514,7 @@ impl BspParseable for CDispNeighbor {
         for i in 0..2 {
             let neighbor = CDispSubNeighbor::from_reader(data);
             let is_last = neighbor.neighbor_span == 0;
-            println!("{} : {}", i, is_last);
             out.sub_neighbors.push(neighbor);
-            if is_last && i == 0 {
-                println!("WOULD BREAK");
-                //break;
-            }
         }
         out
     }
@@ -564,7 +558,6 @@ pub struct DisplacementInfo {
 
 impl BspParseable for DisplacementInfo {
     fn from_reader(data: &mut LumpReader) -> Self {
-        println!("{}:{}", data.get_pos(), data.get_len());
         Self {
             start_position: Vector::from_reader(data),
             disp_vert_start: data.read_i32(),
@@ -579,5 +572,71 @@ impl BspParseable for DisplacementInfo {
             neighbor_data: data.skip_bytes(90), // Skips the neighbor section because my readers are broken.
             allowed_verts: data.read_x_u32(10),
         }
+    }
+}
+
+/* This section is broken, I'm not sure why
+
+pub type PhysicsDisplacement = u16;
+
+impl BspParseable for PhysicsDisplacement {
+    fn from_reader(data: &mut LumpReader) -> Self {
+    //println!("{} : {}", data.get_pos(), data.get_len());
+    data.read_u16()
+    }
+}
+ */
+
+#[derive(Debug)]
+pub struct CollisionData {
+    size: i32,
+    collision_data: Vec<u8>,
+}
+
+impl BspParseable for CollisionData {
+    fn from_reader(data: &mut LumpReader) -> Self {
+        let size = data.read_i32();
+        let collision_data =
+            data.get_data()[data.get_pos()..data.get_pos() + size as usize].to_vec();
+        data.skip_bytes(size as usize);
+
+        Self {
+            size,
+            collision_data,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct PhysicsModel {
+    model_index: i32,
+    data_size: i32,
+    keydata_size: i32,
+    solid_count: i32,
+    collision_data: Vec<CollisionData>,
+    text_data: String,
+}
+
+impl BspParseable for PhysicsModel {
+    fn from_reader(data: &mut LumpReader) -> Self {
+        let mut out = PhysicsModel {
+            model_index: data.read_i32(),
+            data_size: data.read_i32(),
+            keydata_size: data.read_i32(),
+            solid_count: data.read_i32(),
+            collision_data: vec![],
+            text_data: "".to_string(),
+        };
+
+        for _ in 0..out.solid_count {
+            out.collision_data.push(CollisionData::from_reader(data))
+        }
+
+        out.text_data = String::from_utf8_lossy(
+            &data.get_data()[data.get_pos()..data.get_pos() + out.keydata_size as usize],
+        )
+        .to_string();
+        data.skip_bytes(out.keydata_size as usize);
+        out
     }
 }

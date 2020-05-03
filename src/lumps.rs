@@ -204,6 +204,8 @@ pub mod LumpParser {
         pub areas: Vec<Area>,
         pub area_portals: Vec<AreaPortal>,
         pub displacement_info: Vec<DisplacementInfo>,
+        pub original_faces: Vec<Face>,
+        pub physics_models: Vec<PhysicsModel>,
     }
 
     macro_rules! parse_type {
@@ -331,9 +333,13 @@ pub mod LumpParser {
                 i if i == LumpType::Dispinfo as usize => {
                     parse_type!(data, parsed.displacement_info, DisplacementInfo)
                 }
-                i if i == LumpType::Originalfaces as usize => (),
-                i if i == LumpType::Physdisp as usize => (),
-                i if i == LumpType::Physcollide as usize => (),
+                i if i == LumpType::Originalfaces as usize => {
+                    parse_type!(data, parsed.original_faces, Face)
+                }
+                i if i == LumpType::Physdisp as usize => (), // Needs work on finding the structure
+                i if i == LumpType::Physcollide as usize => {
+                    parse_type!(data, parsed.physics_models, PhysicsModel)
+                }
                 i if i == LumpType::Vertnormals as usize => (),
                 i if i == LumpType::Vertnormalindices as usize => (),
                 i if i == LumpType::DispLightmapAlphas as usize => (),
